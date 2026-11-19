@@ -1,0 +1,51 @@
+[project]
+name = "agentci"
+version = "0.1.0"
+description = "GitHub Actions for AI agents — test, evaluate, gate, deploy."
+requires-python = ">=3.12"
+dependencies = [
+    "agentci-api",
+    "agentci-cli",
+    "agentci-core",
+    "agentci-eval",
+    "agentci-runner",
+    "agentci-testgen",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+agentci-api = { workspace = true }
+agentci-cli = { workspace = true }
+agentci-core = { workspace = true }
+agentci-eval = { workspace = true }
+agentci-runner = { workspace = true }
+agentci-testgen = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "packages"]
+addopts = "-q"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["packages", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008", "UP042"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true

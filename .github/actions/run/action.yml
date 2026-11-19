@@ -1,0 +1,57 @@
+name: AgentCI
+description: Generate tests, simulate the agent, evaluate gates, and post a PR status check.
+inputs:
+  pr:
+    description: Pull request number
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  api-url:
+    description: Optional AgentCI API URL for report persistence
+    required: false
+    default: ""
+  baseline:
+    description: Path to a baseline report JSON, relative to the workspace
+    required: false
+    default: ".agentci/baseline.json"
+  agent-url:
+    description: Override the agent endpoint via AGENTCI_ENDPOINT
+    required: false
+    default: ""
+  fail-on-gate:
+    description: Fail the step when a gate fails
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        version: "latest"
+    - name: Install AgentCI
+      shell: bash
+      run: uv sync --directory "${{ github.action_path }}/../../.."
+    - name: Generate tests
+      shell: bash
+      run: |
+        if [ -f openapi.yaml ]; then
+          uv run --directory "${{ github.action_path }}/../../.." agentci generate \
+            --from "$GITHUB_WORKSPACE/openapi.yaml" \
+            --out "$GITHUB_WORKSPACE/tests/cases.yaml" --count 100
+        fi
+    - name: Run evaluation and gates
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        AGENTCI_API_URL: ${{ inputs.api-url }}
+        AGENTCI_ENDPOINT: ${{ inputs.agent-url }}
+      run: |
+        set +e
+        uv run --directory "${{ github.action_path }}/../../.." agentci run \
+          --config "$GITHUB_WORKSPACE/agentci.yaml" \
+          --pr "${{ inputs.pr }}" \
+          --baseline "$GITHUB_WORKSPACE/${{ inputs.baseline }}" \
+          --out "$GITHUB_WORKSPACE/.agentci/report.json"
+        code=$?
+        if [ "${{ inputs.fail-on-gate }}" = "true" ]; then exit $code; fi
+        exit 0

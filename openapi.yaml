@@ -1,0 +1,57 @@
+openapi: 3.0.3
+info:
+  title: Support Agent API
+  version: 1.0.0
+paths:
+  /orders/{order_id}:
+    get:
+      operationId: getOrder
+      summary: Look up an order
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "ord-1234"
+      responses:
+        "200":
+          description: Order details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentAnswer"
+  /refunds:
+    post:
+      operationId: createRefund
+      summary: Request a refund
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefundRequest"
+      responses:
+        "200":
+          description: Agent answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentAnswer"
+components:
+  schemas:
+    AgentAnswer:
+      type: object
+      required: [answer]
+      properties:
+        answer:
+          type: string
+    RefundRequest:
+      type: object
+      required: [order_id, reason]
+      properties:
+        order_id:
+          type: string
+        reason:
+          type: string
+          enum: [damaged, late, other]

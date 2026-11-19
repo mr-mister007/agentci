@@ -1,0 +1,7 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY packages ./packages
+RUN pip install --no-cache-dir -e ./packages/core -e ./packages/runner -e ./packages/api
+ENV AGENTCI_DATA_DIR=/app/.agentci/data
+EXPOSE 8000
+CMD ["agentci-api"]

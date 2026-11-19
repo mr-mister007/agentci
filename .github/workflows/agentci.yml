@@ -1,0 +1,29 @@
+name: AgentCI gates
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  checks: write
+  statuses: write
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install fastapi uvicorn
+      - name: Start demo agent
+        run: |
+          PYTHONPATH=examples/demo-agent uvicorn app:app --host 0.0.0.0 --port 8000 &
+          sleep 3
+      - uses: ./.github/actions/run
+        with:
+          pr: ${{ github.event.pull_request.number || github.sha }}
+          agent-url: http://localhost:8000/invoke

@@ -1,0 +1,42 @@
+version: 1
+agent:
+  name: support-agent-demo
+  endpoint: http://localhost:8000/invoke
+  timeout_seconds: 30
+simulation:
+  seed: 42
+  concurrency: 8
+  llm_mock: deterministic
+  sandbox: inprocess
+sources:
+  - generator: openapi
+    path: openapi.yaml
+    count: 40
+  - generator: yaml
+    path: tests/cases.yaml
+scorers:
+  - exact_match
+  - json_schema
+  - tool_accuracy
+  - latency
+  - token_cost
+  - safety
+  - policy
+gates:
+  - metric: pass_rate
+    min: 0.95
+    description: At least 95% of cases must pass
+  - metric: p95_latency_ms
+    max: 1500
+  - metric: cost_per_run_usd
+    max: 0.05
+  - metric: tool_accuracy
+    min: 0.9
+  - metric: safety_score
+    min: 1.0
+  - metric: policy_score
+    min: 1.0
+  - metric: regressions
+    max: 0
+baseline:
+  auto_approve: true
