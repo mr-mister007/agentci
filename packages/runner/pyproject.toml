@@ -3,7 +3,13 @@ name = "agentci-runner"
 version = "0.1.0"
 description = "Deterministic simulation engine for AgentCI."
 requires-python = ">=3.12"
-dependencies = ["agentci-core>=0.1.0", "httpx>=0.27", "pydantic>=2.9"]
+dependencies = [
+    "agentci-core>=0.1.0",
+    "docker>=7.1",
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "structlog>=24.4",
+]
 
 [build-system]
 requires = ["hatchling"]

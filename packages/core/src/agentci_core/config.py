@@ -14,6 +14,7 @@ class AgentConfig(BaseModel):
     auth_env: str | None = None
     timeout_seconds: float = 30.0
     request_template: dict[str, Any] = Field(default_factory=dict)
+    health_path: str = "/health"
 
 
 class SimulationConfig(BaseModel):
@@ -21,12 +22,22 @@ class SimulationConfig(BaseModel):
     concurrency: int = 8
     llm_mock: Literal["deterministic", "recorded", "live"] = "deterministic"
     tool_mocks: dict[str, Any] = Field(default_factory=dict)
-    sandbox: Literal["inprocess", "gvisor", "firecracker"] = "inprocess"
+    sandbox: Literal["inprocess", "docker", "gvisor", "firecracker"] = "inprocess"
+    image: str | None = None
+    runtime: str | None = None
+    network_mode: str | None = None
+    memory_mb: int = 512
+    cpu_quota: int = 50000
+    pids_limit: int = 128
+    read_only: bool = True
+    env_allowlist: list[str] = Field(default_factory=list)
+    allow_private_endpoint: bool = False
+    retry: dict[str, Any] = Field(default_factory=dict)
 
 
 class SourceConfig(BaseModel):
     path: str | None = None
-    generator: Literal["openapi", "prompt", "logs", "yaml", None] = None
+    generator: Literal["openapi", "prompt", "logs", "yaml", "llm", None] = None
     count: int = 20
 
 
@@ -70,6 +81,8 @@ class LoadedConfig(BaseModel):
     sources: list[SourceConfig] = Field(default_factory=list)
     gates: list[GateConfig] = Field(default_factory=list)
     baseline: BaselineConfig = Field(default_factory=BaselineConfig)
+    budget_usd_per_run: float | None = None
+    max_concurrency: int = 32
     scorers: list[str] = Field(
         default_factory=lambda: [
             "exact_match",
@@ -99,6 +112,15 @@ simulation:
   concurrency: 8
   llm_mock: deterministic
   sandbox: inprocess
+  memory_mb: 512
+  cpu_quota: 50000
+  pids_limit: 128
+  read_only: true
+  retry:
+    max_attempts: 3
+    initial_backoff_ms: 100
+    max_backoff_ms: 2000
+budget_usd_per_run: 0.05
 sources:
   - generator: openapi
     path: openapi.yaml
@@ -156,4 +178,11 @@ def load_config(path: str | Path | None = None) -> LoadedConfig:
     )
     if endpoint := os.environ.get("AGENTCI_ENDPOINT"):
         loaded.agent.endpoint = endpoint
+    if not loaded.simulation.allow_private_endpoint:
+        loaded.simulation.allow_private_endpoint = (
+            os.environ.get("AGENTCI_ALLOW_PRIVATE_ENDPOINTS") == "1"
+        )
+    loaded.simulation.concurrency = min(
+        loaded.simulation.concurrency, max(1, loaded.max_concurrency)
+    )
     return loaded

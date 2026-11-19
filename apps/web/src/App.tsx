@@ -3,8 +3,10 @@ import type { Gate, ReplayEvent, Report, RunItem } from "./types";
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
-async function get<T>(path: string): Promise<T> {
-  const response = await fetch(`${API}${path}`);
+async function get<T>(path: string, apiKey: string): Promise<T> {
+  const response = await fetch(`${API}${path}`, {
+    headers: { "X-API-Key": apiKey },
+  });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return response.json() as Promise<T>;
 }
@@ -77,6 +79,8 @@ function Timeline({ events }: { events: ReplayEvent[] }) {
 }
 
 export default function App() {
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("agentci_api_key") ?? "");
+  const [keyDraft, setKeyDraft] = useState("");
   const [runs, setRuns] = useState<RunItem[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
@@ -84,35 +88,95 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    get<RunItem[]>("/runs")
+    if (!apiKey) return;
+    setError(null);
+    get<RunItem[]>("/runs", apiKey)
       .then((items) => {
         setRuns(items);
         setSelected(items[0]?.run_id ?? null);
       })
       .catch((err: Error) => setError(err.message));
-  }, []);
+  }, [apiKey]);
 
   useEffect(() => {
-    if (!selected) return;
-    get<Report>(`/runs/${selected}`)
+    if (!selected || !apiKey) return;
+    get<Report>(`/runs/${selected}`, apiKey)
       .then((item) => {
         setReport(item);
         setReplay([]);
       })
       .catch((err: Error) => setError(err.message));
-  }, [selected]);
+  }, [selected, apiKey]);
+
+  function signIn() {
+    const key = keyDraft.trim();
+    if (!key) return;
+    localStorage.setItem("agentci_api_key", key);
+    setApiKey(key);
+    setKeyDraft("");
+  }
+
+  function signOut() {
+    localStorage.removeItem("agentci_api_key");
+    setApiKey("");
+    setRuns([]);
+    setReport(null);
+    setReplay([]);
+  }
 
   async function showReplay(testId: string) {
-    if (!selected) return;
+    if (!selected || !apiKey) return;
     try {
-      const data = await get<{ timeline: ReplayEvent[] }>(`/runs/${selected}/trace/${testId}`);
+      const data = await get<{ timeline: ReplayEvent[] }>(
+        `/runs/${selected}/trace/${testId}`,
+        apiKey,
+      );
       setReplay(data.timeline);
     } catch (err) {
       setError((err as Error).message);
     }
   }
 
-  if (error) return <main className="p-8 text-rose-400">API error: {error}</main>;
+  if (!apiKey) {
+    return (
+      <main className="mx-auto max-w-md space-y-4 p-8">
+        <h1 className="text-2xl font-bold">AgentCI</h1>
+        <p className="text-sm text-zinc-500">
+          Enter an AgentCI API key. Keys are created by an admin with{" "}
+          <code className="font-mono text-zinc-300">POST /orgs</code>.
+        </p>
+        <div className="panel space-y-3 p-4">
+          <input
+            className="w-full rounded bg-zinc-900 px-3 py-2 font-mono text-sm"
+            type="password"
+            placeholder="ac_live_..."
+            value={keyDraft}
+            onChange={(event) => setKeyDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") signIn();
+            }}
+          />
+          <button
+            className="w-full rounded bg-emerald-500 px-3 py-2 font-semibold text-zinc-950"
+            onClick={signIn}
+          >
+            Continue
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="space-y-4 p-8 text-rose-400">
+        <p>API error: {error}</p>
+        <button className="panel px-3 py-2 text-sm text-zinc-300" onClick={signOut}>
+          Use another API key
+        </button>
+      </main>
+    );
+  }
 
   const summary = report?.summary;
 
@@ -123,18 +187,23 @@ export default function App() {
           <h1 className="text-2xl font-bold">AgentCI</h1>
           <p className="text-sm text-zinc-500">Eval reports, gate decisions, and replayable failures.</p>
         </div>
-        <select
-          className="panel bg-zinc-900 px-3 py-2 text-sm"
-          value={selected ?? ""}
-          onChange={(event) => setSelected(event.target.value)}
-        >
-          {runs.length === 0 && <option value="">No runs yet</option>}
-          {runs.map((run) => (
-            <option key={run.run_id} value={run.run_id}>
-              {run.agent} · PR {run.pr ?? "—"} · {(run.pass_rate * 100).toFixed(0)}%
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <select
+            className="panel bg-zinc-900 px-3 py-2 text-sm"
+            value={selected ?? ""}
+            onChange={(event) => setSelected(event.target.value)}
+          >
+            {runs.length === 0 && <option value="">No runs yet</option>}
+            {runs.map((run) => (
+              <option key={run.run_id} value={run.run_id}>
+                {run.agent} · PR {run.pr ?? "—"} · {(run.pass_rate * 100).toFixed(0)}%
+              </option>
+            ))}
+          </select>
+          <button className="panel px-3 py-2 text-xs text-zinc-400" onClick={signOut}>
+            Sign out
+          </button>
+        </div>
       </header>
 
       {!report || !summary ? (

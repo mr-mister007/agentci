@@ -10,9 +10,12 @@ uv run agentci generate --from openapi.yaml --out tests/cases.yaml --count 100
 # start the sample agent in another terminal
 uv run uvicorn examples.demo_agent.app:app --app-dir examples/demo-agent --port 8000
 
-uv run agentci run --pr 123 --baseline-out .agentci/baseline.json
+AGENTCI_ALLOW_PRIVATE_ENDPOINTS=1 uv run agentci run --pr 123 --baseline-out .agentci/baseline.json
 uv run agentci replay <test-id> --report .agentci/report.json
 ```
+
+`AGENTCI_ALLOW_PRIVATE_ENDPOINTS=1` is required because the sample agent listens on
+loopback. Public HTTPS endpoints do not need it.
 
 `agentci run` exits non-zero when a gate fails, so it drops straight into CI.
 
@@ -56,8 +59,18 @@ The action posts an `AgentCI` status check with pass rate, p95, cost, and regres
 ## Dashboard
 
 ```bash
+export AGENTCI_BOOTSTRAP_API_KEY="$(openssl rand -hex 32)"
 uv run agentci-api      # http://localhost:8000/docs
 cd apps/web && npm install && npm run dev   # http://localhost:5173
 ```
 
-Or `docker compose up --build` for both.
+Create an org/key with the bootstrap token, then paste the `api_key` into the dashboard:
+
+```bash
+curl -sX POST http://localhost:8000/orgs \
+  -H "X-Admin-Token: $AGENTCI_BOOTSTRAP_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Local","slug":"local"}'
+```
+
+Or `docker compose up --build` for the full Postgres + Redis + worker stack.

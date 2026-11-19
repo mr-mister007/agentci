@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from agentci_core.models import Report
+
+
+def _headers(api_key: str | None = None) -> dict[str, str]:
+    key = api_key or os.environ.get("AGENTCI_API_KEY")
+    return {"X-API-Key": key} if key else {}
 
 
 def post_status(report: Report, target_url: str | None = None) -> str | None:
@@ -41,7 +46,11 @@ def post_status(report: Report, target_url: str | None = None) -> str | None:
     return f"https://github.com/{repository}/commit/{sha}/checks"
 
 
-def push_report(report: Report, api_url: str | None = None) -> str | None:
+def push_report(
+    report: Report,
+    api_url: str | None = None,
+    api_key: str | None = None,
+) -> str | None:
     """Persist a report in the API when AGENTCI_API_URL is configured."""
     url = api_url or os.environ.get("AGENTCI_API_URL")
     if not url:
@@ -49,7 +58,43 @@ def push_report(report: Report, api_url: str | None = None) -> str | None:
     response = httpx.post(
         url.rstrip("/") + "/runs",
         json=json.loads(report.model_dump_json()),
+        headers=_headers(api_key),
         timeout=15,
     )
     response.raise_for_status()
     return url
+
+
+def enqueue_run(
+    payload: dict[str, Any],
+    api_url: str | None = None,
+    api_key: str | None = None,
+) -> str:
+    url = api_url or os.environ.get("AGENTCI_API_URL")
+    if not url:
+        raise RuntimeError("AGENTCI_API_URL or --api-url is required for async runs")
+    response = httpx.post(
+        url.rstrip("/") + "/runs/async",
+        json=payload,
+        headers=_headers(api_key),
+        timeout=15,
+    )
+    response.raise_for_status()
+    return str(response.json()["job_id"])
+
+
+def job_status(
+    job_id: str,
+    api_url: str | None = None,
+    api_key: str | None = None,
+) -> dict[str, Any]:
+    url = api_url or os.environ.get("AGENTCI_API_URL")
+    if not url:
+        raise RuntimeError("AGENTCI_API_URL or --api-url is required")
+    response = httpx.get(
+        url.rstrip("/") + f"/jobs/{job_id}",
+        headers=_headers(api_key),
+        timeout=15,
+    )
+    response.raise_for_status()
+    return cast("dict[str, Any]", response.json())

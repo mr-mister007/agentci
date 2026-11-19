@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from agentci_testgen import generate_tests, load_cases
 from agentci_testgen.generators import (
     dump_cases,
+    generate_from_llm,
     generate_from_logs,
     generate_from_openapi,
     generate_from_prompt,
@@ -35,6 +37,17 @@ def test_log_generation_uses_output_as_expected(tmp_path: Path) -> None:
     path.write_text(json.dumps({"input": {"q": "hi"}, "output": {"answer": "hello"}}) + "\n")
     cases = generate_from_logs(path)
     assert cases[0].expected["output"] == {"answer": "hello"}
+
+
+def test_llm_generation_falls_back_without_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AGENTCI_LLM_API_KEY", raising=False)
+    path = tmp_path / "agent_prompt.txt"
+    path.write_text("Summarize {{ticket}} for [customer].")
+    cases = generate_from_llm(path, count=10)
+    assert cases
+    assert {case.kind.value for case in cases} >= {"happy", "edge", "adversarial"}
 
 
 def test_inference_and_roundtrip(tmp_path: Path) -> None:

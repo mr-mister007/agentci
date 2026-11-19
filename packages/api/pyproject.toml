@@ -3,7 +3,24 @@ name = "agentci-api"
 version = "0.1.0"
 description = "FastAPI report and status-check API for AgentCI."
 requires-python = ">=3.12"
-dependencies = ["agentci-core>=0.1.0", "agentci-runner>=0.1.0", "fastapi>=0.115", "uvicorn>=0.32"]
+dependencies = [
+    "agentci-core>=0.1.0",
+    "agentci-runner>=0.1.0",
+    "alembic>=1.13",
+    "arq>=0.26",
+    "asyncpg>=0.29",
+    "boto3>=1.35",
+    "fastapi>=0.115",
+    "httpx>=0.27",
+    "prometheus-client>=0.20",
+    "pydantic-settings>=2.7",
+    "pyyaml>=6.0",
+    "pyjwt>=2.9",
+    "redis>=5",
+    "sqlalchemy[asyncio]>=2.0",
+    "structlog>=24.4",
+    "uvicorn[standard]>=0.32",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -14,3 +31,4 @@ packages = ["src/agentci_api"]
 
 [project.scripts]
 agentci-api = "agentci_api.main:run"
+agentci-worker = "agentci_api.worker:run_worker"

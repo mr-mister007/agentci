@@ -10,13 +10,19 @@ from agentci_core.config import DEFAULT_CONFIG, LoadedConfig, load_config
 from agentci_core.gates import evaluate_gates
 from agentci_core.models import Report, RunSummary, TestCase, TestKind, Trace
 from agentci_eval import evaluate, summarize
-from agentci_runner import AgentClient, MockRegistry, run_suite
+from agentci_runner import AgentClient, run_suite
 from agentci_runner.replay import replay_trace
-from agentci_testgen import dump_cases, generate_from_config, load_cases, parse_cases
+from agentci_testgen import (
+    dump_cases,
+    generate_from_config,
+    generate_from_llm,
+    load_cases,
+    parse_cases,
+)
 from rich.console import Console
 from rich.table import Table
 
-from agentci_cli.github import post_status, push_report
+from agentci_cli.github import enqueue_run, job_status, post_status, push_report
 
 app = typer.Typer(
     name="agentci",
@@ -90,13 +96,23 @@ def generate(
     source: Path = typer.Option(..., "--from", help="OpenAPI spec, prompt file, or JSONL logs"),
     out: Path = typer.Option(Path("tests/cases.yaml"), "--out", "-o"),
     count: int = typer.Option(50, "--count", "-n"),
+    generator: str = typer.Option(
+        "auto",
+        "--generator",
+        help="auto, llm, openapi, prompt, or logs",
+    ),
 ) -> None:
     """Generate synthetic test cases from a spec, prompt, or logs."""
     if not source.exists():
         raise typer.BadParameter(f"Source not found: {source}")
     from agentci_testgen import generate_tests
 
-    cases = generate_tests(source, count)
+    if generator == "llm":
+        cases = generate_from_llm(source, count)
+    elif generator in {"auto", "openapi", "prompt", "logs"}:
+        cases = generate_tests(source, count)
+    else:
+        raise typer.BadParameter(f"Unknown generator: {generator}")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(dump_cases(cases), encoding="utf-8")
     counts: dict[str, int] = {}
@@ -117,6 +133,8 @@ def run(
     out: Path = typer.Option(Path(".agentci/report.json"), "--out", "-o"),
     baseline_out: Path | None = typer.Option(None, "--baseline-out"),
     api_url: str | None = typer.Option(None, "--api-url"),
+    api_key: str | None = typer.Option(None, "--api-key"),
+    async_run: bool = typer.Option(False, "--async", help="Queue the run on the AgentCI API"),
 ) -> None:
     """Run the suite, score it, evaluate gates, and write a report."""
     cfg = load_config(config)
@@ -125,15 +143,34 @@ def run(
         console.print("[red]No test cases found. Run `agentci generate` first.[/red]")
         raise typer.Exit(2)
 
-    base = _load_baseline(baseline or _baseline_path(cfg))
-    mocks = MockRegistry(config=cfg.simulation)
+    baseline_path = baseline or _baseline_path(cfg)
+    base = _load_baseline(baseline_path)
+    if async_run:
+        payload = {
+            "agent": cfg.agent.name,
+            "pr": pr,
+            "commit": os.environ.get("GITHUB_SHA"),
+            "branch": os.environ.get("GITHUB_REF_NAME") or summary_branch(),
+            "config_yaml": config.read_text(encoding="utf-8"),
+            "cases": [case.model_dump(mode="json") for case in test_cases],
+            "baseline_yaml": (
+                baseline_path.read_text(encoding="utf-8") if baseline_path is not None else None
+            ),
+        }
+        try:
+            job_id = enqueue_run(payload, api_url, api_key)
+        except Exception as exc:  # noqa: BLE001 - surfaced as a CLI failure
+            raise typer.BadParameter(f"Could not queue run: {exc}") from exc
+        console.print(f"[green]✓[/green] Queued {len(test_cases)} cases · job {job_id}")
+        return
+
     console.print(
         f"[bold]AgentCI[/bold] · {cfg.agent.name} · {len(test_cases)} cases · "
         f"seed {cfg.simulation.seed}"
     )
 
     async def execute() -> list[Trace]:
-        async with AgentClient(config=cfg.agent, mocks=mocks) as client:
+        async with AgentClient.from_config(cfg.agent, cfg.simulation) as client:
             return await run_suite(
                 test_cases,
                 client,
@@ -173,7 +210,7 @@ def run(
     _print_report(report, out)
     if check_url := post_status(report, os.environ.get("AGENTCI_REPORT_URL")):
         console.print(f"[dim]GitHub check:[/dim] {check_url}")
-    if api := push_report(report, api_url):
+    if api := push_report(report, api_url, api_key):
         console.print(f"[dim]Report pushed:[/dim] {api}")
 
     if not decision.passed:
@@ -277,6 +314,27 @@ def validate(path: Path = typer.Option(Path("tests/cases.yaml"), "--cases")) -> 
     """Validate a test case file."""
     cases = parse_cases(path.read_text(encoding="utf-8"))
     console.print(f"[green]✓[/green] {len(cases)} valid test cases")
+
+
+@app.command()
+def status(
+    job_id: str = typer.Argument(..., help="Job id returned by `agentci run --async`"),
+    api_url: str | None = typer.Option(None, "--api-url"),
+    api_key: str | None = typer.Option(None, "--api-key"),
+) -> None:
+    """Check an async run queued on the AgentCI API."""
+    data = job_status(job_id, api_url, api_key)
+    _echo_json(data)
+    if data.get("status") == "failed":
+        raise typer.Exit(1)
+
+
+@app.command()
+def worker() -> None:
+    """Start the AgentCI queue worker (requires the API package)."""
+    from agentci_api.worker import run_worker
+
+    run_worker()
 
 
 if __name__ == "__main__":
