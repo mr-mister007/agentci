@@ -1,0 +1,41 @@
+groups:
+  - name: agentci
+    rules:
+      - alert: AgentCIHighErrorRate
+        expr: |
+          sum(rate(agentci_requests_total{status=~"5.."}[5m]))
+          / clamp_min(sum(rate(agentci_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: AgentCI API 5xx rate above 5%
+
+      - alert: AgentCIHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(agentci_request_duration_seconds_bucket[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: AgentCI API p95 latency above 2s
+
+      - alert: AgentCIQueueBacklog
+        expr: agentci_queue_depth > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: AgentCI queue depth above 50 jobs
+
+      - alert: AgentCIFailedGates
+        expr: |
+          sum(increase(agentci_runs_total{result="failed"}[1h])) > 10
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: More than 10 AgentCI gates failed in the last hour

@@ -1,10 +1,34 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-api-build: &api-build
+  context: .
+  dockerfile: Dockerfile.api
+
+x-api-environment: &api-environment
+  AGENTCI_ENVIRONMENT: prod
+  AGENTCI_DATABASE_URL: postgresql+asyncpg://agentci:${AGENTCI_POSTGRES_PASSWORD:?set AGENTCI_POSTGRES_PASSWORD}@postgres:5432/agentci
+  AGENTCI_REDIS_URL: redis://redis:6379/0
+  AGENTCI_ARTIFACT_BACKEND: ${AGENTCI_ARTIFACT_BACKEND:-local}
+  AGENTCI_ARTIFACT_ROOT: /app/.agentci/artifacts
+  AGENTCI_MONTHLY_BUDGET_USD: ${AGENTCI_MONTHLY_BUDGET_USD:-25}
+  AGENTCI_MONTHLY_RUN_QUOTA: ${AGENTCI_MONTHLY_RUN_QUOTA:-10000}
+
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: agentci
-      POSTGRES_PASSWORD: ${AGENTCI_POSTGRES_PASSWORD:-agentci}
+      POSTGRES_PASSWORD: ${AGENTCI_POSTGRES_PASSWORD:?set AGENTCI_POSTGRES_PASSWORD}
       POSTGRES_DB: agentci
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     volumes:
       - agentci-postgres:/var/lib/postgresql/data
     healthcheck:
@@ -12,10 +36,24 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    cpus: 1.0
+    mem_limit: 1g
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - agentci-redis:/data
     healthcheck:
@@ -23,63 +61,173 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    cpus: 0.5
+    mem_limit: 320m
+    logging: *default-logging
+
+  migrate:
+    build: *api-build
+    image: agentci-api:local
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
 
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
+    build: *api-build
+    image: agentci-api:local
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
     environment:
-      AGENTCI_ENVIRONMENT: prod
-      AGENTCI_DATABASE_URL: postgresql+asyncpg://agentci:${AGENTCI_POSTGRES_PASSWORD:-agentci}@postgres:5432/agentci
-      AGENTCI_REDIS_URL: redis://redis:6379/0
+      <<: *api-environment
       AGENTCI_BOOTSTRAP_API_KEY: ${AGENTCI_BOOTSTRAP_API_KEY:?set AGENTCI_BOOTSTRAP_API_KEY}
       AGENTCI_BOOTSTRAP_ORG_NAME: ${AGENTCI_BOOTSTRAP_ORG_NAME:-default}
-      AGENTCI_CORS_ORIGINS: '["http://localhost:4173"]'
-      AGENTCI_ARTIFACT_BACKEND: ${AGENTCI_ARTIFACT_BACKEND:-local}
-      AGENTCI_ARTIFACT_ROOT: /app/.agentci/artifacts
-    ports:
-      - "8000:8000"
+      AGENTCI_CORS_ORIGINS: '["https://${AGENTCI_DOMAIN:-localhost}"]'
+      AGENTCI_GITHUB_WEBHOOK_SECRET: ${AGENTCI_GITHUB_WEBHOOK_SECRET:-}
+      AGENTCI_REPORT_URL: ${AGENTCI_REPORT_URL:-}
+      AGENTCI_ALLOW_PRIVATE_ENDPOINTS: ${AGENTCI_ALLOW_PRIVATE_ENDPOINTS:-0}
+      AGENTCI_ALLOW_INSECURE_AGENT_ENDPOINTS: ${AGENTCI_ALLOW_INSECURE_AGENT_ENDPOINTS:-0}
     volumes:
       - agentci-artifacts:/app/.agentci/artifacts
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    cpus: 1.0
+    mem_limit: 512m
+    logging: *default-logging
 
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
+    build: *api-build
+    image: agentci-api:local
     command: ["agentci-worker"]
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
     environment:
-      AGENTCI_ENVIRONMENT: prod
-      AGENTCI_DATABASE_URL: postgresql+asyncpg://agentci:${AGENTCI_POSTGRES_PASSWORD:-agentci}@postgres:5432/agentci
-      AGENTCI_REDIS_URL: redis://redis:6379/0
-      AGENTCI_BOOTSTRAP_API_KEY: ${AGENTCI_BOOTSTRAP_API_KEY:?set AGENTCI_BOOTSTRAP_API_KEY}
-      AGENTCI_ARTIFACT_BACKEND: ${AGENTCI_ARTIFACT_BACKEND:-local}
-      AGENTCI_ARTIFACT_ROOT: /app/.agentci/artifacts
-      AGENTCI_ALLOW_PRIVATE_ENDPOINTS: "1"
+      <<: *api-environment
+      AGENTCI_ALLOW_PRIVATE_ENDPOINTS: ${AGENTCI_ALLOW_PRIVATE_ENDPOINTS:-0}
+      AGENTCI_ALLOW_INSECURE_AGENT_ENDPOINTS: ${AGENTCI_ALLOW_INSECURE_AGENT_ENDPOINTS:-0}
     volumes:
       - agentci-artifacts:/app/.agentci/artifacts
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    cpus: 2.0
+    mem_limit: 1g
+    logging: *default-logging
 
   web:
     build:
       context: .
       dockerfile: Dockerfile.web
       args:
-        VITE_API_URL: ${AGENTCI_PUBLIC_API_URL:-http://localhost:8000}
+        VITE_API_URL: ${AGENTCI_PUBLIC_API_URL:-https://localhost/api}
+    image: agentci-web:local
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.5
+    mem_limit: 128m
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      AGENTCI_DOMAIN: ${AGENTCI_DOMAIN:-localhost}
+      AGENTCI_TLS_MODE: ${AGENTCI_TLS_MODE:-internal}
+      AGENTCI_ACME_EMAIL: ${AGENTCI_ACME_EMAIL:-admin@example.com}
     ports:
-      - "4173:4173"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
     depends_on:
       - api
+      - web
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:2019/config/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    cpus: 0.5
+    mem_limit: 128m
+    logging: *default-logging
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.rules.yml:/etc/prometheus/alerts.rules.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - api
+    cpus: 0.5
+    mem_limit: 512m
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${AGENTCI_GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    cpus: 0.5
+    mem_limit: 512m
+    logging: *default-logging
+
+networks:
+  default:
+    name: agentci
+    driver: bridge
 
 volumes:
   agentci-postgres:
   agentci-redis:
   agentci-artifacts:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,28 @@
+{
+	email {$AGENTCI_ACME_EMAIL:admin@example.com}
+}
+
+{$AGENTCI_DOMAIN:localhost} {
+	tls {$AGENTCI_TLS_MODE:internal}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	@private path /metrics /api/metrics
+	handle @private {
+		respond 404
+	}
+
+	@api path /api/*
+	handle @api {
+		uri strip_prefix /api
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:4173
+	}
+}

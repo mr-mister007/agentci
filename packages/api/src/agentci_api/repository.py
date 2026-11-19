@@ -4,6 +4,7 @@ import hashlib
 import secrets
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from agentci_core.models import Report
 from sqlalchemy import select, update
@@ -109,6 +110,37 @@ class ReportRepository:
             )
             await session.commit()
         return prefix
+
+    async def list_api_keys(self, org_id: str) -> list[dict[str, Any]]:
+        statement = select(ApiKey).where(ApiKey.org_id == org_id).order_by(ApiKey.created_at.asc())
+        async with self.db.session() as session:
+            keys = (await session.scalars(statement)).all()
+        return [
+            {
+                "id": key.id,
+                "name": key.name,
+                "prefix": key.prefix,
+                "created_at": key.created_at.isoformat(),
+                "last_used_at": key.last_used_at.isoformat() if key.last_used_at else None,
+                "revoked_at": key.revoked_at.isoformat() if key.revoked_at else None,
+            }
+            for key in keys
+        ]
+
+    async def revoke_api_key(self, org_id: str, key_id: str) -> bool:
+        statement = (
+            update(ApiKey)
+            .where(
+                ApiKey.id == key_id,
+                ApiKey.org_id == org_id,
+                ApiKey.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.now(UTC))
+        )
+        async with self.db.session() as session:
+            result = await session.execute(statement)
+            await session.commit()
+        return bool(getattr(result, "rowcount", 0))
 
     async def resolve_api_key(self, plaintext: str) -> OrgContext | None:
         if not plaintext:

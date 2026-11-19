@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 import yaml
@@ -18,13 +19,14 @@ from agentci_api.auth import OrgContext, get_repository, require_admin, require_
 from agentci_api.db import get_database
 from agentci_api.integrations import post_github_status, verify_github_signature
 from agentci_api.observability import (
+    QUEUE_DEPTH,
     RequestIDMiddleware,
     configure_logging,
     get_logger,
     metrics_response,
     observe_run,
 )
-from agentci_api.queue import RunJob, enqueue_run, get_job
+from agentci_api.queue import RunJob, enqueue_run, get_job, get_queue
 from agentci_api.quotas import get_quota_service
 from agentci_api.rate_limit import get_rate_limiter
 from agentci_api.settings import get_settings
@@ -53,12 +55,35 @@ async def _bootstrap() -> None:
     logger.info("bootstrap_ready", org_id=org.id)
 
 
+async def _refresh_queue_depth() -> None:
+    try:
+        QUEUE_DEPTH.set(await get_queue().depth())
+    except Exception:  # noqa: BLE001 - metrics must never break a request
+        logger.warning("queue_metrics_failed")
+
+
+async def _queue_metrics_loop() -> None:
+    while True:
+        await _refresh_queue_depth()
+        await asyncio.sleep(15)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await get_database().init()
     await _bootstrap()
-    yield
-    await get_database().close()
+    if settings.environment in {"prod", "production"} and not os.environ.get(
+        "AGENTCI_GITHUB_WEBHOOK_SECRET"
+    ):
+        logger.warning("github_webhook_secret_not_configured")
+    metrics_task = asyncio.create_task(_queue_metrics_loop())
+    try:
+        yield
+    finally:
+        metrics_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await metrics_task
+        await get_database().close()
 
 
 app = FastAPI(
@@ -71,7 +96,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["X-API-Key", "X-Admin-Token", "X-Request-ID", "Content-Type", "Idempotency-Key"],
 )
 app.add_middleware(RequestIDMiddleware)
@@ -169,6 +194,28 @@ async def create_key(
     return {"api_key": key, "prefix": prefix}
 
 
+@app.get("/orgs/{org_id}/keys")
+async def list_keys(
+    org_id: str,
+    _: None = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    org = await get_repository().get_org(org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return await get_repository().list_api_keys(org_id)
+
+
+@app.delete("/orgs/{org_id}/keys/{key_id}")
+async def revoke_key(
+    org_id: str,
+    key_id: str,
+    _: None = Depends(require_admin),
+) -> dict[str, str]:
+    if not await get_repository().revoke_api_key(org_id, key_id):
+        raise HTTPException(status_code=404, detail="API key not found")
+    return {"status": "revoked"}
+
+
 @app.post("/runs", status_code=201)
 async def create_run(
     report: Report,
@@ -243,6 +290,7 @@ async def create_async_run(
         baseline_yaml=payload.get("baseline_yaml"),
     )
     job_id = await enqueue_run(job)
+    await _refresh_queue_depth()
     return {"job_id": job_id, "status": "queued"}
 
 

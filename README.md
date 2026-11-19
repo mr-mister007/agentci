@@ -76,22 +76,24 @@ regressions. Omit `api-url`/`api-key` to keep reports local to the workflow.
 
 ```bash
 cp .env.example .env
-# edit .env and set AGENTCI_BOOTSTRAP_API_KEY
+# set AGENTCI_DOMAIN, AGENTCI_TLS_MODE, AGENTCI_POSTGRES_PASSWORD,
+# AGENTCI_BOOTSTRAP_API_KEY, and AGENTCI_PUBLIC_API_URL
 docker compose up --build
-# API      → http://localhost:8000  (docs disabled in prod)
-# Metrics  → http://localhost:8000/metrics
-# Web      → http://localhost:4173
+# App       → https://<AGENTCI_DOMAIN>
+# API       → https://<AGENTCI_DOMAIN>/api
+# Metrics   → internal only: api:8000/metrics
+# Dashboard → https://<AGENTCI_DOMAIN>
 ```
 
-The stack runs Postgres, Redis, the API, an `arq` worker, and the dashboard. The API applies
-Alembic migrations on boot; the worker executes queued evaluations and writes reports,
-artifacts, quota usage, and GitHub commit statuses. Postgres, Redis, and the artifact volume
-are persistent; Redis only holds transient job and rate-limit state.
+The stack runs Caddy (TLS reverse proxy), Postgres, Redis, a one-shot Alembic migration job,
+the API, an `arq` worker, and the dashboard. Only Caddy is publicly exposed; API and web
+containers listen on the private Docker network. The worker executes queued evaluations and
+writes reports, artifacts, quota usage, and GitHub commit statuses.
 
 Create the first organization and API key with the bootstrap key:
 
 ```bash
-curl -sX POST http://localhost:8000/orgs \
+curl -sX POST https://agentci.example.com/api/orgs \
   -H "X-Admin-Token: $AGENTCI_BOOTSTRAP_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"Acme","slug":"acme"}'
@@ -100,11 +102,15 @@ curl -sX POST http://localhost:8000/orgs \
 Use the returned `api_key` in the dashboard sign-in form and in CI:
 
 ```bash
-export AGENTCI_API_URL=http://localhost:8000
+export AGENTCI_API_URL=https://agentci.example.com/api
 export AGENTCI_API_KEY=ac_live_...
 uv run agentci run --pr 123 --async
 uv run agentci status <job_id>
 ```
+
+Optional monitoring: `docker compose --profile monitoring up -d` exposes Prometheus on
+`127.0.0.1:9090` and Grafana on `127.0.0.1:3000`. Back up Postgres and artifacts with
+`scripts/backup.sh <output-dir>`; restore with `scripts/restore.sh <backup-dir>`.
 
 See [docs/PRODUCTION.md](docs/PRODUCTION.md) for configuration, security, storage, and
 operations details.

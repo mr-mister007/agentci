@@ -12,12 +12,18 @@ RUN pip install --no-cache-dir \
     -e ./packages/runner \
     -e ./packages/eval \
     -e ./packages/testgen \
-    -e ./packages/api
+    -e ./packages/api \
+    && useradd --create-home --uid 10001 agentci \
+    && mkdir -p /app/.agentci/artifacts \
+    && chown -R agentci:agentci /app
 
 ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
     AGENTCI_ENVIRONMENT=prod \
     AGENTCI_ARTIFACT_ROOT=/app/.agentci/artifacts
+
+USER agentci
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/health || exit 1
-CMD ["sh", "-c", "alembic upgrade head && agentci-api"]
+CMD ["agentci-api"]

@@ -73,4 +73,7 @@ curl -sX POST http://localhost:8000/orgs \
   -d '{"name":"Local","slug":"local"}'
 ```
 
-Or `docker compose up --build` for the full Postgres + Redis + worker stack.
+Or `docker compose up --build` for the full Caddy + Postgres + Redis + API + worker stack.
+With the default local config, the app is served at `https://localhost` and the API at
+`https://localhost/api`; accept the self-signed certificate warning. For a real VPS, set
+`AGENTCI_DOMAIN`, `AGENTCI_TLS_MODE`, and `AGENTCI_PUBLIC_API_URL` in `.env` first.
