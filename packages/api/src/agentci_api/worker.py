@@ -14,6 +14,7 @@ from agentci_eval import evaluate, summarize
 from agentci_runner import AgentClient, run_suite
 from agentci_testgen import parse_cases
 from arq.connections import RedisSettings
+from prometheus_client import start_http_server
 
 from agentci_api.artifacts import get_artifact_store
 from agentci_api.auth import get_repository
@@ -144,6 +145,7 @@ async def run_evaluation(ctx: Any, job_id: str) -> dict[str, Any]:
 
 async def startup(_: Any) -> None:
     await get_database().init()
+    start_http_server(int(os.environ.get("AGENTCI_WORKER_METRICS_PORT", "8001")))
 
 
 async def shutdown(_: Any) -> None:

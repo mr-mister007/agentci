@@ -110,6 +110,8 @@ services:
     build: *api-build
     image: agentci-api:local
     command: ["agentci-worker"]
+    expose:
+      - "8001"
     restart: unless-stopped
     init: true
     security_opt:
@@ -118,6 +120,7 @@ services:
       <<: *api-environment
       AGENTCI_ALLOW_PRIVATE_ENDPOINTS: ${AGENTCI_ALLOW_PRIVATE_ENDPOINTS:-0}
       AGENTCI_ALLOW_INSECURE_AGENT_ENDPOINTS: ${AGENTCI_ALLOW_INSECURE_AGENT_ENDPOINTS:-0}
+      AGENTCI_WORKER_METRICS_PORT: ${AGENTCI_WORKER_METRICS_PORT:-8001}
     volumes:
       - agentci-artifacts:/app/.agentci/artifacts
     depends_on:

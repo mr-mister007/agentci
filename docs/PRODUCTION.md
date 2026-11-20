@@ -148,7 +148,8 @@ docker compose --profile monitoring up -d
 ```
 
 Prometheus listens on `127.0.0.1:9090`, Grafana on `127.0.0.1:3000`, and the datasource is
-provisioned automatically. Alert rules live in `monitoring/alerts.rules.yml`:
+provisioned automatically. Prometheus scrapes API metrics from `api:8000/metrics` and worker
+metrics from `worker:8001/metrics`. Alert rules live in `monitoring/alerts.rules.yml`:
 
 - 5xx rate above 5% for 5 minutes
 - p95 latency above 2 seconds for 10 minutes
@@ -209,3 +210,21 @@ AGENTCI_DOMAIN=localhost AGENTCI_POSTGRES_PASSWORD=test AGENTCI_BOOTSTRAP_API_KE
 The test suite covers the repository/auth layer, quotas, endpoint validation, retry policy,
 Docker sandbox argument construction, artifact stores, rate limiting, metrics, LLM generation,
 and authenticated API paths.
+
+## 11. Real-world validation
+
+The full Docker stack was exercised end to end against a real FastAPI agent running as a
+separate container. TLS termination, org provisioning, the dashboard, the queue worker,
+Postgres persistence, artifact storage, backup, trace replay, Prometheus, and Grafana were all
+part of the run.
+
+- Generated 17 cases from `openapi.yaml`; the healthy agent passed 17/17 with all gates green.
+- A deliberately broken agent was compared against the saved baseline: 16/17 passed, gates
+  failed on `pass_rate` and `regressions`, and the CLI exited non-zero.
+- An async run was queued through the public API and completed by the worker; the report and
+  artifacts were stored and retrievable through the API.
+- Worker metrics are scraped separately from API metrics so `agentci_runs_total`,
+  `agentci_agent_calls_total`, and `agentci_run_cost_usd` are visible in Prometheus.
+
+GitHub commit statuses and real LLM-backed generation were not exercised because they require
+external credentials.

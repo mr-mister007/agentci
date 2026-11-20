@@ -153,6 +153,19 @@ uv run pytest
 cd apps/web && npm run build
 ```
 
+## Real-world validation
+
+The full Docker/Caddy/Postgres/Redis/API/worker stack was tested against a real HTTP agent:
+
+- 17 generated OpenAPI cases: **17/17 passed**, all gates green.
+- Deliberately broken agent compared with the baseline: **16/17 passed**, gates failed on
+  `pass_rate` and `regressions`, CLI exited non-zero.
+- Async API run completed through the worker; report and artifacts were persisted.
+- Dashboard, trace replay, backup, Prometheus, and Grafana were verified.
+
+GitHub commit statuses and real LLM generation were not exercised because they need external
+credentials.
+
 ## Layout
 
 | Path | Purpose |
